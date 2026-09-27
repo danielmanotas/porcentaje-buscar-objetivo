@@ -1,15 +1,17 @@
 # Porcentaje Buscar Objetivo en Oracle PL/SQL
 
+**Versión 1.1**
+
 Función **Oracle PL/SQL** que calcula la tasa por período necesaria para amortizar un saldo inicial mediante una secuencia de pagos, hasta obtener un saldo final cero dentro de las tolerancias establecidas.
 
-La función `calcular_buscar_objetivo` recibe una colección tipada y una tasa de interés efectiva (TIE) como estimación inicial de la tasa. Retorna un `NUMBER` en tanto por uno, **sin redondear la tasa**: `0.1` representa un **10 % por período**.
+La función `calcular_buscar_objetivo` recibe una colección tipada y una semilla numérica opcional como estimación inicial de la tasa. Retorna un `NUMBER` en tanto por uno, **sin redondear la tasa**: `0.1` representa un **10 % por período**.
 
 ## Archivos
 
 | Archivo | Contenido |
 | --- | --- |
 | [porcentaje_buscar_objetivo.sql](porcentaje_buscar_objetivo.sql) | Tipos de entrada, función y verificación de compilación. |
-| [test_porcenaje_buscar_objetivo.sql](test_porcenaje_buscar_objetivo.sql) | 19 casos de prueba con aserciones de tasas, residuos y errores. |
+| [test_porcenaje_buscar_objetivo.sql](test_porcenaje_buscar_objetivo.sql) | 24 casos de prueba con aserciones de tasas, residuos y errores. |
 | [README.md](README.md) | Reglas de negocio, instalación y uso. |
 
 ## Reglas de negocio
@@ -63,14 +65,14 @@ La función trabaja exclusivamente con los parámetros de entrada y no depende d
 ```sql
 calcular_buscar_objetivo(
     p_detalles IN t_buscar_objetivo_detalles,
-    p_tie      IN NUMBER
+    p_semilla_inicial IN NUMBER DEFAULT 0.1
 ) RETURN NUMBER
 ```
 
 | Parámetro | Descripción |
 | --- | --- |
 | `p_detalles` | Colección de registros del caso, incluidos aquellos cuyo pago es `NULL`. |
-| `p_tie` | TIE previamente calculada, en tanto por uno, utilizada como semilla. Pasar `NULL` cuando no esté disponible. |
+| `p_semilla_inicial` | Estimación inicial de la tasa en tanto por uno. Opcional, con valor predeterminado `0.1`. Si es `NULL` o está fuera del dominio, se utiliza `0.1`. |
 
 Cada elemento se construye con `t_buscar_objetivo_detalle(seq, valor_pagos, saldo_inicial)`:
 
@@ -80,15 +82,15 @@ Cada elemento se construye con `t_buscar_objetivo_detalle(seq, valor_pagos, sald
 | `valor_pagos` | `NUMBER` | Importe del pago; se aplica en valor absoluto después del filtrado. |
 | `saldo_inicial` | `NUMBER` | Saldo de partida; se utiliza únicamente el del registro con `seq = 2`. |
 
-La colección debe estar inicializada y contener objetos construidos. Una colección vacía no satisface el mínimo de pagos. El llamador debe preparar los datos y la TIE dentro del contexto transaccional apropiado si deben reflejar una misma instantánea.
+La colección debe estar inicializada y contener objetos construidos. Una colección vacía no satisface el mínimo de pagos. El llamador debe preparar los datos y la semilla dentro del contexto transaccional apropiado si deben reflejar una misma instantánea.
 
-### Semilla e integración opcional
+### Semilla inicial
 
-`p_tie` puede proceder de un cálculo externo, como `calcular_tir_no_per` del proyecto `tir-no-periodica`. Los códigos `-20004`, `-20005`, `-20006`, `-20007` y `-20008` citados en el comentario de la función corresponden a ese cálculo externo; no son errores emitidos por `calcular_buscar_objetivo`.
+`p_semilla_inicial` es el punto de partida numérico de Newton-Raphson. No requiere obtener previamente otra tasa ni depende de un proyecto externo.
 
-Si la aplicación trata esos errores como una semilla no disponible, puede pasar `NULL` para utilizar el respaldo `0.1`. Los demás errores de obtención deben gestionarse en la aplicación que prepara los parámetros. La integración es opcional: esta función no invoca `calcular_tir_no_per` ni requiere instalar el otro proyecto.
+Si el parámetro se omite, se utiliza `0.1`. También se utiliza `0.1` cuando se pasa `NULL` o un valor fuera del dominio `-0.99999999 < r <= 100`. Una semilla válida se utiliza tal como se recibe, incluido el valor cero.
 
-La semilla se expresa en tanto por uno. Una tasa obtenida con otra periodicidad solo actúa como estimación inicial; la tasa retornada corresponde a los períodos de los pagos recibidos.
+La semilla solo guía la búsqueda inicial. La periodicidad de la tasa resultante depende de los períodos representados por los pagos.
 
 ## Ejemplo de uso
 
@@ -105,8 +107,7 @@ DECLARE
     v_tasa NUMBER;
 BEGIN
     v_tasa := calcular_buscar_objetivo(
-        p_detalles => v_detalles,
-        p_tie      => NULL
+        p_detalles => v_detalles
     );
     DBMS_OUTPUT.PUT_LINE('Tasa por período: ' || TO_CHAR(v_tasa));
 END;
@@ -114,6 +115,15 @@ END;
 ```
 
 La primera posición se omite. La segunda aporta el saldo inicial de 100 y el pago de 110. El resultado se devuelve en tanto por uno; para expresarlo como porcentaje, el consumidor puede multiplicarlo por 100.
+
+Para proporcionar una estimación inicial explícita:
+
+```sql
+v_tasa := calcular_buscar_objetivo(
+    p_detalles        => v_detalles,
+    p_semilla_inicial => 0.05
+);
+```
 
 ## Método y tolerancias
 
@@ -133,7 +143,7 @@ Se busca una tasa cuyo saldo final satisfaga la tolerancia. Primero se utiliza *
 | Tolerancia absoluta de tasa | `1E-18` |
 | Semilla de respaldo | `0.1` |
 
-Se utiliza `p_tie` si está dentro del dominio; si es `NULL` o está fuera de él, se utiliza `0.1`. La TIE solo guía la búsqueda inicial y no determina la periodicidad del resultado.
+Se utiliza `p_semilla_inicial` si está dentro del dominio; si es `NULL` o está fuera de él, se utiliza `0.1`. La semilla solo guía la búsqueda inicial y no determina la periodicidad del resultado.
 
 Newton acepta un residuo cero o exige simultáneamente la tolerancia del saldo y una corrección estimada de tasa dentro de tolerancia. La bisección comprueba el residuo y la amplitud del intervalo. Antes de retornar, la función verifica convergencia, dominio y residuo final.
 
@@ -184,10 +194,11 @@ Después de instalar los tipos y la función, ejecutar:
 @test_porcenaje_buscar_objetivo.sql
 ```
 
-El script contiene **19 casos**. Cada caso satisfactorio muestra `OK`; cualquier aserción fallida genera `-20000` y detiene la ejecución en un cliente compatible con SQL*Plus.
+El script contiene **24 casos**. Cada caso satisfactorio muestra `OK`; cualquier aserción fallida genera `-20000` y detiene la ejecución en un cliente compatible con SQL*Plus.
 
 | Cobertura | Comprobaciones |
 | --- | --- |
+| Semilla inicial | Parámetro omitido, llamada con nombre, `NULL`, límite inferior y valor superior al dominio; todos con respaldo `0.1` cuando corresponde. |
 | Precisión de salida | Tasa `1/3` sin redondeo a 16 decimales y residuo dentro de tolerancia. |
 | Selección de registros | Ordenación, pago nulo, valor absoluto y saldo tomado de un registro con pago nulo. |
 | Cantidad mínima | Error `-20011` después de filtrar pagos nulos. |
@@ -205,4 +216,4 @@ Los casos de bisección comprueban que la derivada inicial es exactamente cero y
 
 Cada caso de tasa comprueba el dominio, una diferencia respecto a la tasa esperada no mayor que `1E-18` y un residuo final no mayor que `ABS(saldo_inicial) × 1E-18`. Las secuencias largas construyen el saldo mediante descuento inverso, sin `POWER` ni una semilla igual a la raíz esperada. Las tolerancias se mantienen en `1E-18`; los resultados se verifican con la aritmética `NUMBER` de la instancia Oracle donde se ejecute el script.
 
-Al completar todos los casos, el script muestra `Pruebas correctas: 19 casos.`. Esta cobertura se centra en errores de negocio y convergencia; no incluye la provocación deliberada de errores inesperados `-20999`.
+Al completar todos los casos, el script muestra `Pruebas correctas: 24 casos.`. Esta cobertura se centra en errores de negocio y convergencia; no incluye la provocación deliberada de errores inesperados `-20999`.
