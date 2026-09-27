@@ -225,6 +225,31 @@ BEGIN
         registrar('Secuencia de ' || v_periodos || ' periodos');
     END LOOP;
 
+    -- Verificar la API opcional y el nombre público de la semilla.
+    v_detalles := t_buscar_objetivo_detalles(
+        t_buscar_objetivo_detalle(1, 0, NULL),
+        t_buscar_objetivo_detalle(2, 110, 100)
+    );
+    v_tasa := calcular_buscar_objetivo(p_detalles => v_detalles);
+    comprobar(v_tasa = 0.1, 'El parámetro omitido debe utilizar 0.1.');
+    registrar('Semilla omitida');
+
+    v_tasa := calcular_buscar_objetivo(
+        p_detalles => v_detalles, p_semilla_inicial => 0.05
+    );
+    comprobar(ABS(v_tasa - 0.1) <= 1E-18, 'Falló la semilla con nombre.');
+    comprobar(ABS(100 * (1 + v_tasa) - 110) <= 100 * 1E-18,
+              'Residuo fuera de tolerancia con semilla explícita.');
+    registrar('Semilla explícita con nombre');
+
+    v_tasa := verificar_tasa('Semilla NULL', v_detalles, NULL, 0.1);
+    registrar('Semilla NULL');
+    v_tasa := verificar_tasa('Semilla en límite inferior excluido',
+                            v_detalles, -0.99999999, 0.1);
+    registrar('Semilla en límite inferior excluido');
+    v_tasa := verificar_tasa('Semilla superior al dominio', v_detalles, 101, 0.1);
+    registrar('Semilla superior al dominio');
+
     DBMS_OUTPUT.PUT_LINE('Pruebas correctas: ' || v_casos || ' casos.');
 END;
 /
