@@ -2,7 +2,7 @@
 
 Función **Oracle PL/SQL** que calcula la tasa por período necesaria para amortizar un saldo inicial mediante una secuencia de pagos, hasta obtener un saldo final cero dentro de las tolerancias establecidas.
 
-Recibe una colección tipada y una TIE como semilla. Retorna un `NUMBER` en tanto por uno, **sin redondear la tasa**: `0.1` representa un **10 % por período**.
+La función `calcular_buscar_objetivo` recibe una colección tipada y una tasa de interés efectiva (TIE) como estimación inicial de la tasa. Retorna un `NUMBER` en tanto por uno, **sin redondear la tasa**: `0.1` representa un **10 % por período**.
 
 ## Archivos
 
@@ -14,11 +14,11 @@ Recibe una colección tipada y una TIE como semilla. Retorna un `NUMBER` en tant
 
 ## Reglas de negocio
 
-**Estas reglas determinan qué registros participan y cómo se aplica cada pago. Se conservan del proceso original.**
+**Las reglas de negocio definen la selección de registros, el saldo de partida y la aplicación de los pagos.**
 
 | Regla | Comportamiento |
 | --- | --- |
-| Caso a calcular | El llamador debe seleccionar los registros del caso antes de construir la colección. La función ya no filtra por empresa, registro o novedad. |
+| Caso a calcular | La colección debe contener únicamente los registros de la operación que se desea evaluar. La selección de esos registros corresponde a la aplicación que invoca la función. |
 | Pago nulo | Un registro con `valor_pagos IS NULL` se excluye de la lista de pagos y no genera período. Sigue participando en la búsqueda y validación del saldo inicial. |
 | Cantidad mínima | Deben existir al menos dos registros con pago no nulo, después del filtrado. |
 | Orden de aplicación | Los pagos se ordenan por `seq` ascendente, independientemente del orden de entrada. |
@@ -56,7 +56,7 @@ Desde la carpeta del repositorio, ejecutar en este orden:
 
 El primer script crea o reemplaza los tipos `t_buscar_objetivo_detalle`, `t_buscar_objetivo_detalles` y la función `calcular_buscar_objetivo`. Muestra los errores de compilación y comprueba `USER_ERRORS`. El segundo ejecuta las pruebas y un ejemplo.
 
-No se requieren tablas de negocio ni la función `pf_calcular_tie` para instalar o ejecutar estos archivos.
+La función trabaja exclusivamente con los parámetros de entrada y no depende de tablas ni de funciones externas de cálculo financiero.
 
 ## Parámetros
 
@@ -141,20 +141,18 @@ La ausencia de redondeo explícito conserva la precisión disponible de `NUMBER`
 | `-20015` | `seq` repetido entre los pagos filtrados o más de un registro con `seq = 2`. |
 | `-20999` | Error inesperado; incluye el error original y la traza de ejecución. |
 
-## Cambios respecto al original
+## Pruebas
 
-Las cinco rutinas numéricas internas se conservan literalmente. Los cambios se limitan a recibir la colección y la TIE por parámetros, consultar esa colección en lugar de las tablas, devolver `v_x` sin redondearlo y ajustar la documentación y el contexto del error inesperado.
+Ejecutar las pruebas después de instalar los tipos y la función:
 
-El error `-20013` desaparece porque ya no existe el parámetro de selección de origen. La obtención de la TIE queda a cargo del llamador: para conservar el respaldo original, debe pasar `NULL` si `pf_calcular_tie` produce `-20004`, `-20005`, `-20006`, `-20007` o `-20008`. Los demás errores de obtención deben gestionarse antes de invocar esta función.
+```sql
+@test_porcenaje_buscar_objetivo.sql
+```
 
-## Pruebas y estado de validación
-
-El archivo de pruebas comprueba:
+El script incluye las siguientes comprobaciones:
 
 - Una tasa de `1/3`, su residuo y la conservación de decimales más allá de las 16 posiciones.
 - La ordenación, la exclusión de pagos nulos, el uso de pagos absolutos y la obtención del saldo desde un registro con pago nulo.
 - El error `-20015` ante un registro `seq = 2` duplicado.
 
 Si las aserciones pasan, muestra `Pruebas correctas.` y ejecuta el ejemplo de saldo 100 y pago 110. Ante un fallo, propaga el error.
-
-**Estado de validación:** se verificó estáticamente la conservación del código numérico. La compilación y las pruebas en Oracle están pendientes de ejecución; no se dispuso de una conexión Oracle en el entorno de preparación.
