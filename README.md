@@ -1,4 +1,4 @@
-# porcentaje-buscar-objetivo
+# Porcentaje Buscar Objetivo en Oracle PL/SQL
 
 Función **Oracle PL/SQL** que calcula la tasa por período necesaria para amortizar un saldo inicial mediante una secuencia de pagos, hasta obtener un saldo final cero dentro de las tolerancias establecidas.
 
