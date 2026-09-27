@@ -52,6 +52,10 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   *   Cada posición desde la segunda de la lista filtrada representa un
   *   período y su pago se toma en valor absoluto.
   *   La recurrencia usa la secuencia de pagos, no diferencias entre fechas.
+  *   Orden de validación: cantidad de pagos; seq repetido en pagos filtrados;
+  *   unicidad de seq = 2; existencia de seq = 2; saldo inicial positivo.
+  *   La primera condición incumplida determina el error. Después se valida
+  *   la solución numérica dentro del dominio y de las tolerancias.
   *
   * Cálculo:
   *   saldo_1 = saldo_inicial del registro con seq = 2
@@ -61,10 +65,12 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   *
   * Semilla:
   *   Se utiliza primero p_tie. Se utiliza 0.1 cuando esa TIE es NULL o está
-  *   fuera del dominio admitido. El llamador obtiene la TIE y, si su cálculo
-  *   genera -20004, -20005, -20006, -20007 o -20008, debe pasar NULL para
-  *   conservar el respaldo original. Los demás errores se gestionan fuera
-  *   de esta función, antes de invocarla.
+  *   fuera del dominio admitido. Si la semilla procede de calcular_tir_no_per
+  *   (repositorio tir-no-periodica), sus errores -20004, -20005, -20006,
+  *   -20007 o -20008 se pueden tratar pasando NULL para utilizar el respaldo.
+  *   Estos códigos pertenecen a ese cálculo externo, no a esta función.
+  *   La obtención de la semilla y sus demás errores se gestionan antes de
+  *   invocar esta función. No se requiere ese proyecto como dependencia.
   *
   * Consistencia de lectura:
   *   Los pagos y el saldo inicial se obtienen de p_detalles; la semilla,
@@ -320,6 +326,11 @@ CREATE OR REPLACE FUNCTION calcular_buscar_objetivo (
      *   Solo acepta el inferior si supera c_min_rate; el superior puede ser
      *   igual a c_max_rate. El llamador vuelve a comprobar esos límites.
      *   Cada punto medio conserva la mitad con cambio de signo del residuo.
+     *   Con S > 0 y pagos A_k >= 0, F(r)/(1+r)^m =
+     *   S - SUM(A_k/(1+r)^k) es creciente si hay algún pago positivo.
+     *   Una raíz menor que -0.50 implica residuos positivos en ambos
+     *   extremos iniciales; dos residuos negativos no requieren expandir
+     *   hacia abajo. Con todos los pagos cero no hay raíz en el dominio.
      *   No captura localmente excepciones numéricas.
      */
     FUNCTION f_bisection(
