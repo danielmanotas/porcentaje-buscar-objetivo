@@ -42,7 +42,8 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   * Parámetros:
   *   p_detalles : Colección t_buscar_objetivo_detalles con seq, valor_pagos y
   *                saldo_inicial de los registros que se desean procesar.
-  *   p_tie      : TIE previamente calculada, en tanto por uno; admite NULL.
+  *   p_semilla_inicial : Estimación inicial de la tasa, en tanto por uno.
+  *                       Opcional; valor predeterminado 0.1. Admite NULL.
   *
   * Datos y validaciones:
   *   Se excluyen los registros con valor_pagos NULL y se ordenan por seq
@@ -64,17 +65,14 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   *   con reducción del paso y bisección con expansión acotada como respaldo.
   *
   * Semilla:
-  *   Se utiliza primero p_tie. Se utiliza 0.1 cuando esa TIE es NULL o está
-  *   fuera del dominio admitido. Si la semilla procede de calcular_tir_no_per
-  *   (repositorio tir-no-periodica), sus errores -20004, -20005, -20006,
-  *   -20007 o -20008 se pueden tratar pasando NULL para utilizar el respaldo.
-  *   Estos códigos pertenecen a ese cálculo externo, no a esta función.
-  *   La obtención de la semilla y sus demás errores se gestionan antes de
-  *   invocar esta función. No se requiere ese proyecto como dependencia.
+  *   Se utiliza p_semilla_inicial como punto de partida de Newton-Raphson.
+  *   Si se omite el parámetro, su valor predeterminado es 0.1. Si se pasa
+  *   NULL o un valor fuera del dominio admitido, también se utiliza 0.1.
+  *   La semilla es una estimación numérica y no requiere un cálculo externo.
   *
   * Consistencia de lectura:
   *   Los pagos y el saldo inicial se obtienen de p_detalles; la semilla,
-  *   de p_tie. El llamador debe preparar los parámetros con el contexto
+  *   de p_semilla_inicial. El llamador debe preparar los parámetros con el contexto
   *   transaccional apropiado si deben proceder de la misma instantanea.
   *
   * Parámetros numéricos:
@@ -89,7 +87,7 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   * Retorno:
   *   NUMBER: tasa por período en tanto por uno, sin redondeo de salida.
   *   La raíz se valida antes de retornarla. Los períodos de los pagos determinan
-  *   la periodicidad de la tasa; la TIE mensual solo constituye la semilla.
+  *   la periodicidad de la tasa; la semilla solo guía la búsqueda inicial.
   *
   * Errores mediante RAISE_APPLICATION_ERROR:
   *   -20011: Menos de dos pagos con valor no nulo.
@@ -113,7 +111,7 @@ SHOW ERRORS TYPE t_buscar_objetivo_detalles
   */
 CREATE OR REPLACE FUNCTION calcular_buscar_objetivo (
       p_detalles IN t_buscar_objetivo_detalles,
-      p_tie      IN NUMBER
+      p_semilla_inicial IN NUMBER DEFAULT 0.1
   ) RETURN NUMBER IS
     -- Pagos ordenados por seq: se omite la primera posición de la lista filtrada.
     -- El saldo de partida procede de saldo_inicial donde seq = 2.
@@ -454,13 +452,13 @@ CREATE OR REPLACE FUNCTION calcular_buscar_objetivo (
       RAISE_APPLICATION_ERROR(-20012, 'Buscar Objetivo: saldo_inicial de seq = 2 debe ser no nulo y mayor que cero.');
     END IF;
 
-    -- Calcular la tolerancia monetaria y obtener la semilla desde p_tie.
+    -- Calcular la tolerancia monetaria y obtener la semilla desde p_semilla_inicial.
     DECLARE
       v_tol_saldo NUMBER := ABS(v_saldo_ini) * c_tol_rel;
     BEGIN
-      v_x := p_tie;
+      v_x := p_semilla_inicial;
 
-      -- Utilizar 0.1 cuando la TIE no esté disponible o esté fuera del dominio.
+      -- Utilizar 0.1 cuando la semilla sea NULL o esté fuera del dominio.
       IF v_x IS NULL OR v_x <= c_min_rate OR v_x > c_max_rate THEN
         v_x := 0.1;
       END IF;
