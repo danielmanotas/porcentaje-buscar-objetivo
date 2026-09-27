@@ -9,7 +9,7 @@ La función `calcular_buscar_objetivo` recibe una colección tipada y una tasa d
 | Archivo | Contenido |
 | --- | --- |
 | [porcentaje_buscar_objetivo.sql](porcentaje_buscar_objetivo.sql) | Tipos de entrada, función y verificación de compilación. |
-| [test_porcenaje_buscar_objetivo.sql](test_porcenaje_buscar_objetivo.sql) | Pruebas con aserciones y ejemplo de uso. |
+| [test_porcenaje_buscar_objetivo.sql](test_porcenaje_buscar_objetivo.sql) | 19 casos de prueba con aserciones de tasas, residuos y errores. |
 | [README.md](README.md) | Reglas de negocio, instalación y uso. |
 
 ## Reglas de negocio
@@ -54,7 +54,7 @@ Desde la carpeta del repositorio, ejecutar en este orden:
 @test_porcenaje_buscar_objetivo.sql
 ```
 
-El primer script crea o reemplaza los tipos `t_buscar_objetivo_detalle`, `t_buscar_objetivo_detalles` y la función `calcular_buscar_objetivo`. Muestra los errores de compilación y comprueba `USER_ERRORS`. El segundo ejecuta las pruebas y un ejemplo.
+El primer script crea o reemplaza los tipos `t_buscar_objetivo_detalle`, `t_buscar_objetivo_detalles` y la función `calcular_buscar_objetivo`. Muestra los errores de compilación y comprueba `USER_ERRORS`. El segundo ejecuta las pruebas de negocio y convergencia.
 
 La función trabaja exclusivamente con los parámetros de entrada y no depende de tablas ni de funciones externas de cálculo financiero.
 
@@ -81,6 +81,14 @@ Cada elemento se construye con `t_buscar_objetivo_detalle(seq, valor_pagos, sald
 | `saldo_inicial` | `NUMBER` | Saldo de partida; se utiliza únicamente el del registro con `seq = 2`. |
 
 La colección debe estar inicializada y contener objetos construidos. Una colección vacía no satisface el mínimo de pagos. El llamador debe preparar los datos y la TIE dentro del contexto transaccional apropiado si deben reflejar una misma instantánea.
+
+### Semilla e integración opcional
+
+`p_tie` puede proceder de un cálculo externo, como `calcular_tir_no_per` del proyecto `tir-no-periodica`. Los códigos `-20004`, `-20005`, `-20006`, `-20007` y `-20008` citados en el comentario de la función corresponden a ese cálculo externo; no son errores emitidos por `calcular_buscar_objetivo`.
+
+Si la aplicación trata esos errores como una semilla no disponible, puede pasar `NULL` para utilizar el respaldo `0.1`. Los demás errores de obtención deben gestionarse en la aplicación que prepara los parámetros. La integración es opcional: esta función no invoca `calcular_tir_no_per` ni requiere instalar el otro proyecto.
+
+La semilla se expresa en tanto por uno. Una tasa obtenida con otra periodicidad solo actúa como estimación inicial; la tasa retornada corresponde a los períodos de los pagos recibidos.
 
 ## Ejemplo de uso
 
@@ -131,6 +139,20 @@ Newton acepta un residuo cero o exige simultáneamente la tolerancia del saldo y
 
 La ausencia de redondeo explícito conserva la precisión disponible de `NUMBER`; no implica precisión infinita.
 
+### Expansión hacia tasas menores que -0.50
+
+Con saldo inicial `S > 0`, `m` períodos, pagos absolutos `A_k >= 0` y `x = 1 + r > 0`, el residuo final puede escribirse como:
+
+```text
+F(r) = x^m × [S − SUM(A_k / x^k)], k = 1 .. m
+```
+
+El factor `x^m` es positivo. La expresión entre corchetes es estrictamente creciente en `r` cuando existe algún pago aplicado positivo. Por tanto, tiene como máximo una raíz y determina el signo del residuo a ambos lados de ella. Esto no requiere que el propio residuo `F` sea creciente en todo el dominio.
+
+Si la raíz está por debajo de `-0.50`, los residuos en `-0.50` y `2` son positivos. Esa es precisamente la condición que desplaza el extremo inferior a `-0.99999999`. Tener ambos residuos negativos y una raíz inferior a `-0.50` es incompatible con estas reglas de negocio. Cuando todos los pagos aplicados son cero, el residuo permanece positivo y no existe raíz en el dominio admitido.
+
+La prueba con saldo `100`, pagos `20` y `3`, y semilla `-0.9` obliga a abandonar Newton por derivada cero. Los residuos de los extremos iniciales son `12` y `837`; la bisección debe ampliar el intervalo hacia abajo y encontrar la tasa `-0.7`.
+
 ## Errores
 
 | Código | Motivo |
@@ -141,18 +163,46 @@ La ausencia de redondeo explícito conserva la precisión disponible de `NUMBER`
 | `-20015` | `seq` repetido entre los pagos filtrados o más de un registro con `seq = 2`. |
 | `-20999` | Error inesperado; incluye el error original y la traza de ejecución. |
 
+### Prioridad de las validaciones
+
+Las validaciones se ejecutan en el siguiente orden. La primera condición incumplida determina el error retornado:
+
+1. Cantidad de pagos no nulos: `-20011` si quedan menos de dos.
+2. Valores de `seq` repetidos en los pagos filtrados: `-20015`.
+3. Más de un registro con `seq = 2`, incluidos los de pago nulo: `-20015`.
+4. Ausencia de un registro con `seq = 2`: `-20012`.
+5. Saldo inicial nulo, cero o negativo: `-20012`.
+6. Búsqueda y validación numérica: `-20014` si no se obtiene una solución dentro del dominio y las tolerancias.
+
+Por ejemplo, un único pago retenido y dos registros con `seq = 2` producen `-20011`. Dos pagos con `seq` repetido y sin un registro `seq = 2` producen `-20015`. Los errores inesperados durante el procesamiento se gestionan mediante `-20999`.
+
 ## Pruebas
 
-Ejecutar las pruebas después de instalar los tipos y la función:
+Después de instalar los tipos y la función, ejecutar:
 
 ```sql
 @test_porcenaje_buscar_objetivo.sql
 ```
 
-El script incluye las siguientes comprobaciones:
+El script contiene **19 casos**. Cada caso satisfactorio muestra `OK`; cualquier aserción fallida genera `-20000` y detiene la ejecución en un cliente compatible con SQL*Plus.
 
-- Una tasa de `1/3`, su residuo y la conservación de decimales más allá de las 16 posiciones.
-- La ordenación, la exclusión de pagos nulos, el uso de pagos absolutos y la obtención del saldo desde un registro con pago nulo.
-- El error `-20015` ante un registro `seq = 2` duplicado.
+| Cobertura | Comprobaciones |
+| --- | --- |
+| Precisión de salida | Tasa `1/3` sin redondeo a 16 decimales y residuo dentro de tolerancia. |
+| Selección de registros | Ordenación, pago nulo, valor absoluto y saldo tomado de un registro con pago nulo. |
+| Cantidad mínima | Error `-20011` después de filtrar pagos nulos. |
+| Saldo inicial | Error `-20012` por ausencia de `seq = 2`, saldo nulo, cero y negativo, en casos independientes. |
+| Solución fuera del dominio | Error `-20014` para una raíz de `101` y para pagos aplicados todos iguales a cero. |
+| Duplicados | Error `-20015` por secuencia repetida entre pagos y por `seq = 2` duplicado con un pago nulo. |
+| Prioridad de validaciones | Cantidad insuficiente antes de duplicados; duplicados antes de ausencia del saldo. |
+| Pago cero intermedio | Saldo `100`, pagos `0` y `121`: tasa `0.1` para dos períodos. |
+| Tasa negativa | Saldo `100`, pago `80`: tasa `-0.2`, conservando el signo. |
+| Respaldo por bisección | Saldo `100`, pagos `40` y `5`, semilla `-0.8`: derivada cero con residuo `-9`; resultado esperado `-0.5`. |
+| Expansión inferior de bisección | Saldo `100`, pagos `20` y `3`, semilla `-0.9`: derivada cero con residuo `-4`; resultado esperado `-0.7`. |
+| Secuencias largas | 60 y 120 pagos de `1000`, saldo construido por descuento al `1 %`, semilla `0.02` y tasa esperada `0.01`. |
 
-Si las aserciones pasan, muestra `Pruebas correctas.` y ejecuta el ejemplo de saldo 100 y pago 110. Ante un fallo, propaga el error.
+Los casos de bisección comprueban que la derivada inicial es exactamente cero y que el residuo no lo es. Estas condiciones obligan a Newton a terminar sin converger, de modo que la solución posterior debe proceder del respaldo. El segundo caso exige también iteraciones dentro del intervalo ampliado, ya que la raíz no coincide con sus extremos.
+
+Cada caso de tasa comprueba el dominio, una diferencia respecto a la tasa esperada no mayor que `1E-18` y un residuo final no mayor que `ABS(saldo_inicial) × 1E-18`. Las secuencias largas construyen el saldo mediante descuento inverso, sin `POWER` ni una semilla igual a la raíz esperada. Las tolerancias se mantienen en `1E-18`; los resultados se verifican con la aritmética `NUMBER` de la instancia Oracle donde se ejecute el script.
+
+Al completar todos los casos, el script muestra `Pruebas correctas: 19 casos.`. Esta cobertura se centra en errores de negocio y convergencia; no incluye la provocación deliberada de errores inesperados `-20999`.
